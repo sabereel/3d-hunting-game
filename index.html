@@ -1,34 +1,36 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8">
+  <meta charset="UTF-8">
   <title>3D Hunting Simulator</title>
   <style>
-    body { margin:0; overflow:hidden; }
-    canvas { display:block; }
+    body { margin: 0; overflow: hidden; background: #87CEEB; }
+    canvas { display: block; }
     #hud {
-      position:absolute;
-      top:10px;
-      left:10px;
-      color:white;
-      font-family:sans-serif;
-      z-index:10;
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      color: white;
+      font-family: sans-serif;
+      font-size: 18px;
+      z-index: 10;
+      background: rgba(0,0,0,0.3);
+      padding: 5px 10px;
+      border-radius: 5px;
     }
   </style>
 </head>
 <body>
   <div id="hud">Weapon: .22 Rifle | Money: $0 | Health: 100</div>
 
-  <!-- Three.js library -->
+  <!-- Three.js -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r152/three.min.js"></script>
-
-  <!-- PointerLockControls -->
   <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/examples/js/controls/PointerLockControls.js"></script>
 
   <script>
   // ===== THREE.JS SETUP =====
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+  const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 500);
   camera.position.set(0,2,5);
 
   const renderer = new THREE.WebGLRenderer({antialias:true});
@@ -36,12 +38,10 @@
   document.body.appendChild(renderer.domElement);
 
   // ===== LIGHT =====
-  const light = new THREE.DirectionalLight(0xffffff, 1);
+  const light = new THREE.DirectionalLight(0xffffff,1);
   light.position.set(5,10,7);
   scene.add(light);
-
-  const ambient = new THREE.AmbientLight(0x404040);
-  scene.add(ambient);
+  scene.add(new THREE.AmbientLight(0x404040));
 
   // ===== GROUND =====
   const groundGeo = new THREE.PlaneGeometry(200,200);
@@ -50,23 +50,30 @@
   ground.rotation.x = -Math.PI/2;
   scene.add(ground);
 
-  // ===== RIVERS/LAKES =====
+  // ===== LAKES =====
   const waterGeo = new THREE.PlaneGeometry(20,10);
   const waterMat = new THREE.MeshPhongMaterial({color:0x1E90FF});
   const lake = new THREE.Mesh(waterGeo, waterMat);
-  lake.rotation.x = -Math.PI/2;
+  lake.rotation.x=-Math.PI/2;
   lake.position.set(30,0.01,30);
   scene.add(lake);
 
   // ===== CONTROLS =====
   const controls = new THREE.PointerLockControls(camera, document.body);
-  document.addEventListener('click', () => controls.lock());
+  document.addEventListener('click', ()=> controls.lock());
 
   // ===== PLAYER =====
   const player = {health:100, money:0, weapon:'.22 Rifle'};
+  const weapons = {
+    ".22 Rifle": {damage:{head:100, lung:70, body:50}, caliber:1},
+    "Rifle": {damage:{head:100, lung:100, body:80}, caliber:2},
+    "Shotgun": {damage:{head:120, lung:100, body:90}, caliber:3},
+    "Bow": {damage:{head:100, lung:100, body:100}, caliber:1},
+    "Pistol": {damage:{head:80, lung:50, body:40}, caliber:1}
+  };
   const hud = document.getElementById('hud');
 
-  function updateHUD() {
+  function updateHUD(){
     hud.innerHTML = `Weapon: ${player.weapon} | Money: $${player.money} | Health: ${player.health}`;
   }
 
@@ -77,7 +84,7 @@
 
   function spawnAnimal(x,z,type='deer'){
     const geo = new THREE.BoxGeometry(1,1,2);
-    const mat = new THREE.MeshPhongMaterial({color:type==='deer'?0x8B4513:0x555555});
+    const mat = new THREE.MeshPhongMaterial({color:type==='deer'?0x8B4513:type==='boar'?0x555555:0x222222});
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(x,0.5,z);
     mesh.userData = {health:100,type:type};
@@ -85,9 +92,11 @@
     animals.push(mesh);
   }
 
-  // spawn some animals
-  for(let i=0;i<5;i++){
-    spawnAnimal(Math.random()*50-25, Math.random()*50-25);
+  // spawn animals
+  const animalTypes = ['deer','boar','wolf'];
+  for(let i=0;i<8;i++){
+    const type = animalTypes[Math.floor(Math.random()*animalTypes.length)];
+    spawnAnimal(Math.random()*50-25, Math.random()*50-25, type);
   }
 
   // ===== FOOTPRINTS =====
@@ -97,7 +106,7 @@
     const fp = new THREE.Mesh(geo,mat);
     fp.rotation.x=-Math.PI/2;
     fp.position.set(x,0.01,z);
-    fp.age=0; // track age
+    fp.age=0;
     scene.add(fp);
     footprints.push(fp);
   }
@@ -114,6 +123,7 @@
   }
 
   // ===== SHOOTING & ZOOM =====
+  let zoomed=false;
   document.addEventListener('mousedown',(e)=>{
     if(e.button===0){ // left click = shoot
       const raycaster = new THREE.Raycaster();
@@ -122,15 +132,24 @@
       if(hits.length>0){
         const target = hits[0].object;
         const localY = hits[0].point.y - target.position.y;
-        // Vital hits
-        if(localY>0.8) target.userData.health -=100; // head
-        else if(localY>0.4) target.userData.health -=70; // lung
-        else target.userData.health -=50; // body
+        let location;
+        if(localY>0.8) location='head';
+        else if(localY>0.4) location='lung';
+        else location='body';
+        const weaponDmg = weapons[player.weapon].damage[location];
+        if(location==='lung'){
+          // delayed death for lung shots
+          setTimeout(()=>{
+            target.userData.health -=weaponDmg;
+          },2000);
+        } else {
+          target.userData.health -=weaponDmg;
+        }
         addBlood(target.position.x, target.position.z);
       }
-    } else if(e.button===2){ // right click = zoom
-      if(camera.fov===75) camera.fov=20;
-      else camera.fov=75;
+    } else if(e.button===2){ // right click = zoom toggle
+      zoomed=!zoomed;
+      camera.fov = zoomed?20:75;
       camera.updateProjectionMatrix();
     }
   });
@@ -143,20 +162,17 @@
     animals.forEach(a=>{
       a.position.x += (Math.random()-0.5)*0.05;
       a.position.z += (Math.random()-0.5)*0.05;
-      if(Math.random()<0.05){
-        addFootprint(a.position.x, a.position.z);
-      }
+      if(Math.random()<0.05) addFootprint(a.position.x,a.position.z);
       if(a.userData.health<=0){
         scene.remove(a);
-        player.money += 50; // money for kill
+        player.money += 50 + (a.userData.type==='wolf'?50:0); // wolves worth more
       }
     });
-    animals.filter(a=>a.userData.health>0);
 
     // age footprints
     footprints.forEach(fp=>{
       fp.age +=0.01;
-      fp.material.opacity = Math.max(0,1-fp.age/50); // fades slowly
+      fp.material.opacity = Math.max(0,1-fp.age/50);
     });
 
     updateHUD();
